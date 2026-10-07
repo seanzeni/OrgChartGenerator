@@ -12,31 +12,37 @@ Each slide shows one manager and that manager's employees. Employees appear insi
 
 ## Excel structure
 
-The current and future sheets must each have one header row and one row per employee. The default expected headers are:
+- `Employees`: Enter each person once with Employee ID, Employee Name, and the Manager selector. Mark managers with `☑ Yes`.
+- `Current`: Select an employee, manager, and role for the current organization.
+- `Future`: Select an employee, manager, and role for the future organization.
+- `Role Settings`: Maintain role names and recolor the Slide Color cells. The generator reads the actual Excel fill color.
 
-- `Employee ID`
-- `Employee Name`
-- `Manager ID`
-- `Manager Name`
-- `Role Type`
-
-Employee and manager IDs must contain exactly four characters. Header names can be changed in `settings.json`.
+Employee and manager IDs must contain exactly four letters or numbers. Names are looked up from the Employees sheet, so they do not need to be typed again on Current or Future.
 
 ## Setup
 
-1. Copy `settings.example.json` to `settings.json`.
-2. Set `workbookPath`, `photoFolder`, `outputPath`, and the two sheet names.
-3. Update the column mappings and role colors if needed.
-4. Run from PowerShell:
+1. Enter your organization data in `Org Chart Data Template.xlsx`.
+2. Copy `settings.example.json` to `settings.json`.
+3. Set `photoFolder`. The example settings already point to the included workbook and create `Org Chart Output.pptx` in this folder.
+4. Update the column mappings only if you rename the Current or Future input headers.
+5. Run from PowerShell:
 
 ```powershell
 .\run.ps1
 ```
 
+The default workflow uses PowerShell and Microsoft Excel desktop to read the workbook. Python is not required.
+
 To use a differently named settings file:
 
 ```powershell
 .\run.ps1 -Settings .\my-settings.json
+```
+
+Optional Python fallback for a machine without Microsoft Excel desktop:
+
+```powershell
+.\run.ps1 -Extractor Python
 ```
 
 Relative paths in the settings file resolve from the folder containing that settings file.

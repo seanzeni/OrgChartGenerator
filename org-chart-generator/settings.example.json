@@ -1,28 +1,21 @@
 {
-  "workbookPath": "C:/path/to/org-data.xlsx",
+  "workbookPath": "./Org Chart Data Template.xlsx",
   "photoFolder": "C:/path/to/employee-photos",
-  "outputPath": "C:/path/to/org-chart.pptx",
+  "outputPath": "./Org Chart Output.pptx",
   "sheets": {
+    "employees": "Employees",
     "current": "Current",
-    "future": "Future"
+    "future": "Future",
+    "roles": "Role Settings"
   },
   "columns": {
     "employeeId": "Employee ID",
-    "employeeName": "Employee Name",
     "managerId": "Manager ID",
-    "managerName": "Manager Name",
     "role": "Role Type"
   },
   "titles": {
     "current": "Current organization",
     "future": "Future organization"
-  },
-  "roleColors": {
-    "Leadership": "#2F5597",
-    "Operations": "#70AD47",
-    "Technical": "#ED7D31",
-    "Support": "#A5A5A5",
-    "default": "#5B7FA3"
   },
   "options": {
     "directorId": "",

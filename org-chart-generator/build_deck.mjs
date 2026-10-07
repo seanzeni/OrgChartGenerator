@@ -253,11 +253,12 @@ async function addPortrait(slide, person, position, accentColor, labelSize = 14)
 }
 
 function roleColor(role) {
-  const configured = settings.roleColors ?? {};
+  const configured = data.roleColors ?? {};
   const direct = configured[role];
   if (direct) return safeColor(direct);
   const key = Object.keys(configured).find((candidate) => candidate.toLowerCase() === role.toLowerCase());
-  return safeColor(key ? configured[key] : configured.default);
+  const unspecifiedKey = Object.keys(configured).find((candidate) => candidate.toLowerCase() === "unspecified");
+  return safeColor(key ? configured[key] : (unspecifiedKey ? configured[unspecifiedKey] : "#5B7FA3"));
 }
 
 function groupByRole(members) {
