@@ -1,0 +1,40 @@
+{
+  "workbookPath": "C:/path/to/org-data.xlsx",
+  "photoFolder": "C:/path/to/employee-photos",
+  "outputPath": "C:/path/to/org-chart.pptx",
+  "sheets": {
+    "current": "Current",
+    "future": "Future"
+  },
+  "columns": {
+    "employeeId": "Employee ID",
+    "employeeName": "Employee Name",
+    "managerId": "Manager ID",
+    "managerName": "Manager Name",
+    "role": "Role Type"
+  },
+  "titles": {
+    "current": "Current organization",
+    "future": "Future organization"
+  },
+  "roleColors": {
+    "Leadership": "#2F5597",
+    "Operations": "#70AD47",
+    "Technical": "#ED7D31",
+    "Support": "#A5A5A5",
+    "default": "#5B7FA3"
+  },
+  "options": {
+    "directorId": "",
+    "includeManagersInEmployeeCount": false,
+    "showEmployeeNames": true,
+    "showEmployeeIds": false,
+    "photoExtensions": [".jpg", ".jpeg", ".png", ".webp"],
+    "slideWidth": 1280,
+    "slideHeight": 720,
+    "fontFamily": "Aptos",
+    "minimumEmployeeTileWidth": 54,
+    "maximumEmployeesPerManager": 60,
+    "failOnMissingPhotos": false
+  }
+}
