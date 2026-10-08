@@ -13,11 +13,13 @@ Each slide shows one manager and that manager's employees. Employees appear insi
 ## Excel structure
 
 - `Employees`: Enter each person once with Employee ID, Employee Name, and the Manager selector. Mark managers with `☑ Yes`.
-- `Current`: Select an employee, manager, and role for the current organization.
-- `Future`: Select an employee, manager, and role for the future organization.
+- `Current`: Select an employee name from the alphabetical dropdown; the Employee ID fills automatically. Then select the manager and role for the current organization. For an empty seat, leave Employee Name blank and enter its PCN.
+- `Future`: Select an employee name from the alphabetical dropdown; the Employee ID fills automatically. Then select the manager and role for the future organization. For an empty seat, leave Employee Name blank and enter its PCN.
 - `Role Settings`: Maintain role names and recolor the Slide Color cells. The generator reads the actual Excel fill color.
 
-Employee and manager IDs must contain exactly four letters or numbers. Names are looked up from the Employees sheet, so they do not need to be typed again on Current or Future.
+Employee and manager IDs must contain exactly four letters or numbers. Employee names are selected from an alphabetical dropdown on Current and Future, and the corresponding Employee ID is filled automatically.
+
+`PCN` identifies a position and is required when no employee is assigned. `Explanation` is optional. When present, the generated slide gives that employee or vacant position a red circle outline. Hover over the circle or its label in PowerPoint to see the explanation as a ScreenTip.
 
 ## Setup
 
@@ -31,7 +33,9 @@ Employee and manager IDs must contain exactly four letters or numbers. Names are
 .\run.ps1
 ```
 
-The default workflow uses PowerShell and Microsoft Excel desktop to read the workbook. Python is not required.
+`Org Chart Example.xlsx` contains a populated sample with a director, three managers, multiple roles, and current-to-future reporting changes. To generate a deck from it, copy `settings.example.json` to `settings.json` and change `workbookPath` to `./Org Chart Example.xlsx`.
+
+The default workflow uses PowerShell plus Microsoft Excel and PowerPoint desktop automation. Python, Node.js, Codex, and private packages are not required.
 
 To use a differently named settings file:
 
@@ -42,8 +46,11 @@ To use a differently named settings file:
 Optional Python fallback for a machine without Microsoft Excel desktop:
 
 ```powershell
+python -m pip install -r .\requirements.txt
 .\run.ps1 -Extractor Python
 ```
+
+The Python fallback only replaces Excel data extraction. PowerPoint desktop still creates the deck.
 
 Relative paths in the settings file resolve from the folder containing that settings file.
 
@@ -53,8 +60,21 @@ Relative paths in the settings file resolve from the folder containing that sett
 - `directorId`: Optional four-character ID for the director who should appear first. Leave blank to infer the top manager from the reporting relationships.
 - `showEmployeeNames`: Shows employee names beneath photos.
 - `showEmployeeIds`: Shows IDs with names.
-- `maximumEmployeesPerManager`: Stops generation if a team exceeds the defined capacity.
+- `maxPeoplePerRow`: Maximum employee photos per category row. Limited to 5.
+- `maxCategoriesPerSlide`: Maximum role categories per slide. Limited to 4.
+- `maxRowsPerCategory`: Number of employee rows available per category before a continuation slide is added.
+- `employeeNameFontSize`: Font size used beneath employee photos.
 - `failOnMissingPhotos`: Stops instead of using an initials placeholder.
-- `minimumEmployeeTileWidth`: Controls the smallest permitted employee tile before the slide is considered too dense.
+
+Large teams and teams with more than four categories automatically continue onto additional slides. Current slides remain directly followed by their current continuations, then the manager's future slides and future continuations.
+
+Category layout adapts automatically:
+
+- One category uses the full grouping area.
+- Two categories split left and right.
+- Three categories place two panels across the top and the largest category full-width below.
+- Four categories use an equal 2-by-2 grid.
 
 The generator writes a missing-photo report next to the PowerPoint using the suffix `.missing-photos.txt`.
+
+It also creates a separate HR handoff workbook at `hrOutputPath`. `Manager Summary` lists positions, employees, and vacancies gained or lost by each manager. `Employee Changes` lists manager transfers, additions, removals, staffing changes, vacancy changes, and role changes by comparing Current with Future. If `hrOutputPath` is omitted, the file is created beside the PowerPoint with ` HR Handoff.xlsx` appended to the PowerPoint name.

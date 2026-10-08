@@ -146,7 +146,9 @@ def read_state_sheet(workbook, sheet_name, columns, employees, role_colors):
     if sheet_name not in workbook.sheetnames:
         raise ValueError(f"Sheet '{sheet_name}' was not found")
     sheet = workbook[sheet_name]
-    labels = [columns[key] for key in ("employeeId", "managerId", "role")]
+    pcn_label = columns.get("pcn", "PCN")
+    explanation_label = columns.get("explanation", "Explanation")
+    labels = [columns[key] for key in ("employeeId", "managerId", "role")] + [pcn_label, explanation_label]
     lookup = require_columns(sheet, labels)
     records = []
     seen = {}
@@ -154,11 +156,16 @@ def read_state_sheet(workbook, sheet_name, columns, employees, role_colors):
         employee_id = normalize(sheet.cell(row_number, lookup[columns["employeeId"].casefold()]).value).upper()
         manager_id = normalize(sheet.cell(row_number, lookup[columns["managerId"].casefold()]).value).upper()
         role = normalize(sheet.cell(row_number, lookup[columns["role"].casefold()]).value)
-        if not employee_id and not manager_id and not role:
+        pcn = normalize(sheet.cell(row_number, lookup[pcn_label.casefold()]).value)
+        explanation = normalize(sheet.cell(row_number, lookup[explanation_label.casefold()]).value)
+        if not employee_id and not pcn and not manager_id and not role and not explanation:
             continue
-        validate_id(employee_id, "employee ID", sheet_name, row_number)
+        if employee_id:
+            validate_id(employee_id, "employee ID", sheet_name, row_number)
+        elif not pcn:
+            raise ValueError(f"Sheet '{sheet_name}', row {row_number}: enter an employee or a PCN for the vacant position")
         validate_id(manager_id, "manager ID", sheet_name, row_number)
-        if employee_id not in employees:
+        if employee_id and employee_id not in employees:
             raise ValueError(f"Sheet '{sheet_name}', row {row_number}: employee ID '{employee_id}' is not on Employees")
         if manager_id not in employees:
             raise ValueError(f"Sheet '{sheet_name}', row {row_number}: manager ID '{manager_id}' is not on Employees")
@@ -168,18 +175,23 @@ def read_state_sheet(workbook, sheet_name, columns, employees, role_colors):
             role = "Unspecified"
         if role.casefold() not in role_colors:
             raise ValueError(f"Sheet '{sheet_name}', row {row_number}: role '{role}' is not on Role Settings")
-        if employee_id in seen:
+        record_key = f"EMP:{employee_id}" if employee_id else f"PCN:{pcn.upper()}"
+        if record_key in seen:
+            duplicate_label = f"employee ID '{employee_id}'" if employee_id else f"PCN '{pcn}'"
             raise ValueError(
-                f"Sheet '{sheet_name}' has duplicate employee ID '{employee_id}' "
-                f"on rows {seen[employee_id]} and {row_number}"
+                f"Sheet '{sheet_name}' has duplicate {duplicate_label} "
+                f"on rows {seen[record_key]} and {row_number}"
             )
-        seen[employee_id] = row_number
+        seen[record_key] = row_number
         records.append({
             "employeeId": employee_id,
-            "employeeName": employees[employee_id]["name"],
+            "employeeName": employees[employee_id]["name"] if employee_id else "Vacant",
             "managerId": manager_id,
             "managerName": employees[manager_id]["name"],
             "role": role_colors[role.casefold()]["name"],
+            "pcn": pcn,
+            "explanation": explanation,
+            "isVacant": not bool(employee_id),
             "sourceRow": row_number,
         })
     return records
@@ -197,7 +209,7 @@ def main():
         workbook_path = (settings_path.parent / workbook_path).resolve()
     if not workbook_path.exists():
         raise FileNotFoundError(f"Workbook not found: {workbook_path}")
-    workbook = load_workbook(workbook_path, read_only=False, data_only=False)
+    workbook = load_workbook(workbook_path, read_only=False, data_only=True)
     employees = read_employees(workbook, settings["sheets"].get("employees", "Employees"))
     role_colors = read_role_colors(workbook, settings["sheets"].get("roles", "Role Settings"))
     payload = {

@@ -2,6 +2,7 @@
   "workbookPath": "./Org Chart Data Template.xlsx",
   "photoFolder": "C:/path/to/employee-photos",
   "outputPath": "./Org Chart Output.pptx",
+  "hrOutputPath": "./Org Chart HR Handoff.xlsx",
   "sheets": {
     "employees": "Employees",
     "current": "Current",
@@ -11,7 +12,9 @@
   "columns": {
     "employeeId": "Employee ID",
     "managerId": "Manager ID",
-    "role": "Role Type"
+    "role": "Role Type",
+    "pcn": "PCN",
+    "explanation": "Explanation"
   },
   "titles": {
     "current": "Current organization",
@@ -23,11 +26,11 @@
     "showEmployeeNames": true,
     "showEmployeeIds": false,
     "photoExtensions": [".jpg", ".jpeg", ".png", ".webp"],
-    "slideWidth": 1280,
-    "slideHeight": 720,
     "fontFamily": "Aptos",
-    "minimumEmployeeTileWidth": 54,
-    "maximumEmployeesPerManager": 60,
+    "maxPeoplePerRow": 5,
+    "maxCategoriesPerSlide": 4,
+    "maxRowsPerCategory": 3,
+    "employeeNameFontSize": 7,
     "failOnMissingPhotos": false
   }
 }

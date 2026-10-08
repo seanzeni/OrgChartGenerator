@@ -129,7 +129,9 @@ function Read-StateSheet {
     $employeeHeader = [string]$Columns.employeeId
     $managerHeader = [string]$Columns.managerId
     $roleHeader = [string]$Columns.role
-    $headers = Get-HeaderMap $sheet @($employeeHeader, $managerHeader, $roleHeader)
+    $pcnHeader = if ($Columns.PSObject.Properties.Name -contains "pcn" -and $Columns.pcn) { [string]$Columns.pcn } else { "PCN" }
+    $explanationHeader = if ($Columns.PSObject.Properties.Name -contains "explanation" -and $Columns.explanation) { [string]$Columns.explanation } else { "Explanation" }
+    $headers = Get-HeaderMap $sheet @($employeeHeader, $managerHeader, $roleHeader, $pcnHeader, $explanationHeader)
     $records = [System.Collections.Generic.List[object]]::new()
     $seen = @{}
     $lastRow = [int]$sheet.UsedRange.Rows.Count
@@ -137,10 +139,13 @@ function Read-StateSheet {
         $employeeId = (Get-NormalizedText $sheet.Cells.Item($row, $headers[$employeeHeader.ToLowerInvariant()]).Value2).ToUpperInvariant()
         $managerId = (Get-NormalizedText $sheet.Cells.Item($row, $headers[$managerHeader.ToLowerInvariant()]).Value2).ToUpperInvariant()
         $role = Get-NormalizedText $sheet.Cells.Item($row, $headers[$roleHeader.ToLowerInvariant()]).Value2
-        if (-not $employeeId -and -not $managerId -and -not $role) { continue }
-        Assert-FourCharacterId $employeeId "employee ID" $SheetName $row
+        $pcn = Get-NormalizedText $sheet.Cells.Item($row, $headers[$pcnHeader.ToLowerInvariant()]).Value2
+        $explanation = Get-NormalizedText $sheet.Cells.Item($row, $headers[$explanationHeader.ToLowerInvariant()]).Value2
+        if (-not $employeeId -and -not $pcn -and -not $managerId -and -not $role -and -not $explanation) { continue }
+        if ($employeeId) { Assert-FourCharacterId $employeeId "employee ID" $SheetName $row }
+        elseif (-not $pcn) { throw "Sheet '$SheetName', row $row`: enter an employee or a PCN for the vacant position" }
         Assert-FourCharacterId $managerId "manager ID" $SheetName $row
-        if (-not $Employees.ContainsKey($employeeId)) {
+        if ($employeeId -and -not $Employees.ContainsKey($employeeId)) {
             throw "Sheet '$SheetName', row $row`: employee ID '$employeeId' is not on Employees"
         }
         if (-not $Employees.ContainsKey($managerId)) {
@@ -154,16 +159,21 @@ function Read-StateSheet {
         if (-not $RoleColors.ContainsKey($roleKey)) {
             throw "Sheet '$SheetName', row $row`: role '$role' is not on Role Settings"
         }
-        if ($seen.ContainsKey($employeeId)) {
-            throw "Sheet '$SheetName' has duplicate employee ID '$employeeId' on rows $($seen[$employeeId]) and $row"
+        $recordKey = if ($employeeId) { "EMP:$employeeId" } else { "PCN:$($pcn.ToUpperInvariant())" }
+        if ($seen.ContainsKey($recordKey)) {
+            $label = if ($employeeId) { "employee ID '$employeeId'" } else { "PCN '$pcn'" }
+            throw "Sheet '$SheetName' has duplicate $label on rows $($seen[$recordKey]) and $row"
         }
-        $seen[$employeeId] = $row
+        $seen[$recordKey] = $row
         $records.Add([ordered]@{
             employeeId = $employeeId
-            employeeName = $Employees[$employeeId].name
+            employeeName = if ($employeeId) { $Employees[$employeeId].name } else { "Vacant" }
             managerId = $managerId
             managerName = $Employees[$managerId].name
             role = $RoleColors[$roleKey].name
+            pcn = $pcn
+            explanation = $explanation
+            isVacant = -not [bool]$employeeId
             sourceRow = $row
         })
     }
