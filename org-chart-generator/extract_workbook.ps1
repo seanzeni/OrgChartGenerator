@@ -82,7 +82,11 @@ function Read-Employees {
         Assert-FourCharacterId $id "employee ID" $SheetName $row
         if (-not $name) { throw "Sheet '$SheetName', row $row`: employee name is blank" }
         if ($employees.ContainsKey($id)) { throw "Sheet '$SheetName' has duplicate employee ID '$id'" }
-        $managerMarkers = @("☑ yes", "yes", "true", "1", "x", "checked", "manager")
+        # Build the checked-box marker from its code point so this script remains
+        # compatible with Windows PowerShell 5.1, which may read UTF-8 files
+        # without a BOM using the system ANSI code page when launched by right-click.
+        $checkedYesMarker = ([string][char]0x2611) + " yes"
+        $managerMarkers = @($checkedYesMarker, "yes", "true", "1", "x", "checked", "manager")
         $isManager = $managerMarkers -contains $managerValue.ToLowerInvariant()
         $employees[$id] = [ordered]@{
             id = $id

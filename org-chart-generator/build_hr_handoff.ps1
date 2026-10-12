@@ -22,6 +22,39 @@ function Get-Text {
     return ([string]$Record.$Property).Trim()
 }
 
+function Get-PersonName {
+    param([string]$Id, $OrgData)
+    if (-not $Id) { return "" }
+    $person = @($OrgData.employees | Where-Object { $_.id -eq $Id } | Select-Object -First 1)
+    if ($person.Count -gt 0) { return [string]$person[0].name }
+    $record = @($OrgData.future + $OrgData.current | Where-Object { $_.managerId -eq $Id } | Select-Object -First 1)
+    if ($record.Count -gt 0) { return [string]$record[0].managerName }
+    return $Id
+}
+
+function New-ParentMap {
+    param($Records)
+    $map = @{}
+    foreach ($record in $Records) {
+        $employeeId = Get-Text $record "employeeId"
+        if ($employeeId) { $map[$employeeId] = Get-Text $record "managerId" }
+    }
+    return $map
+}
+
+function Resolve-DirectorForRecord {
+    param($Record, [hashtable]$ParentMap, [string[]]$DirectorIds)
+    if ($null -eq $Record) { return "" }
+    $current = Get-Text $Record "managerId"
+    $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    while ($current -and $visited.Add($current)) {
+        if ($DirectorIds -contains $current) { return $current }
+        if (-not $ParentMap.ContainsKey($current)) { return $current }
+        $current = [string]$ParentMap[$current]
+    }
+    return ""
+}
+
 function Set-RangeValues {
     param($Sheet, [int]$StartRow, [int]$StartColumn, [object[]]$Rows)
     if ($Rows.Count -eq 0) { return }
@@ -64,6 +97,25 @@ $hrOutputPath = if ($configuredHrPath) {
 
 $currentRecords = @($orgData.current)
 $futureRecords = @($orgData.future)
+$configuredDirectors = @()
+if ($settingsData.options.PSObject.Properties.Name -contains "directorIds" -and $null -ne $settingsData.options.directorIds) {
+    $configuredDirectors = @($settingsData.options.directorIds | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() } | Where-Object { $_ })
+} elseif ($settingsData.options.PSObject.Properties.Name -contains "directorId" -and $settingsData.options.directorId) {
+    $configuredDirectors = @(([string]$settingsData.options.directorId).Trim().ToUpperInvariant())
+}
+$directorIds = @($configuredDirectors | Sort-Object -Unique)
+if ($directorIds.Count -eq 0) {
+    $roots = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($stateLabel in @("current", "future")) {
+        $records = if ($stateLabel -eq "current") { @($currentRecords) } else { @($futureRecords) }
+        $stateManagerIds = @($records.managerId | Sort-Object -Unique)
+        $managedManagers = @($records | Where-Object { $stateManagerIds -contains $_.employeeId } | ForEach-Object { $_.employeeId } | Sort-Object -Unique)
+        foreach ($root in @($stateManagerIds | Where-Object { $managedManagers -notcontains $_ })) { $null = $roots.Add([string]$root) }
+    }
+    $directorIds = @($roots | Sort-Object)
+}
+$currentParentMap = New-ParentMap $currentRecords
+$futureParentMap = New-ParentMap $futureRecords
 $matchedFutureRows = [System.Collections.Generic.HashSet[int]]::new()
 $pairs = [System.Collections.Generic.List[object]]::new()
 foreach ($current in $currentRecords) {
@@ -101,6 +153,8 @@ foreach ($pair in $pairs) {
     $futureEmployeeId = Get-Text $future "employeeId"
     $currentManagerId = Get-Text $current "managerId"
     $futureManagerId = Get-Text $future "managerId"
+    $currentDirectorId = Resolve-DirectorForRecord $current $currentParentMap $directorIds
+    $futureDirectorId = Resolve-DirectorForRecord $future $futureParentMap $directorIds
     $currentRole = Get-Text $current "role"
     $futureRole = Get-Text $future "role"
 
@@ -115,6 +169,8 @@ foreach ($pair in $pairs) {
         else { $changeType = "Position staffing change" }
     } elseif ($currentManagerId -ne $futureManagerId) {
         $changeType = "Manager transfer"
+    } elseif ($currentDirectorId -ne $futureDirectorId) {
+        $changeType = "Director transfer"
     } elseif ($currentRole -ne $futureRole) {
         $changeType = "Role change"
     } else {
@@ -139,6 +195,10 @@ foreach ($pair in $pairs) {
         losingManagerName = $losingManagerName
         gainingManagerId = $gainingManagerId
         gainingManagerName = $gainingManagerName
+        currentDirectorId = $currentDirectorId
+        currentDirectorName = Get-PersonName $currentDirectorId $orgData
+        futureDirectorId = $futureDirectorId
+        futureDirectorName = Get-PersonName $futureDirectorId $orgData
         currentRole = $currentRole
         futureRole = $futureRole
         currentExplanation = Get-Text $current "explanation"
@@ -147,6 +207,7 @@ foreach ($pair in $pairs) {
 }
 
 $managerStats = @{}
+$directorStats = @{}
 foreach ($movement in $movements) {
     foreach ($side in @("losing", "gaining")) {
         $idProperty = "${side}ManagerId"
@@ -174,6 +235,22 @@ foreach ($movement in $movements) {
             if ($movement.currentEmployeeId) { $stats.lostEmployees++ } else { $stats.lostVacancies++ }
         }
     }
+    if ($movement.currentDirectorId -and $movement.currentDirectorId -ne $movement.futureDirectorId) {
+        if (-not $directorStats.ContainsKey($movement.currentDirectorId)) {
+            $directorStats[$movement.currentDirectorId] = [ordered]@{ directorId = $movement.currentDirectorId; directorName = $movement.currentDirectorName; gainedPositions = 0; lostPositions = 0; gainedEmployees = 0; lostEmployees = 0; gainedVacancies = 0; lostVacancies = 0 }
+        }
+        $stats = $directorStats[$movement.currentDirectorId]
+        $stats.lostPositions++
+        if ($movement.currentEmployeeId) { $stats.lostEmployees++ } else { $stats.lostVacancies++ }
+    }
+    if ($movement.futureDirectorId -and $movement.currentDirectorId -ne $movement.futureDirectorId) {
+        if (-not $directorStats.ContainsKey($movement.futureDirectorId)) {
+            $directorStats[$movement.futureDirectorId] = [ordered]@{ directorId = $movement.futureDirectorId; directorName = $movement.futureDirectorName; gainedPositions = 0; lostPositions = 0; gainedEmployees = 0; lostEmployees = 0; gainedVacancies = 0; lostVacancies = 0 }
+        }
+        $stats = $directorStats[$movement.futureDirectorId]
+        $stats.gainedPositions++
+        if ($movement.futureEmployeeId) { $stats.gainedEmployees++ } else { $stats.gainedVacancies++ }
+    }
 }
 
 $excel = $null
@@ -191,6 +268,9 @@ try {
     $summarySheet = $workbook.Worksheets.Add()
     $summarySheet.Name = "Manager Summary"
     $summarySheet.Move($workbook.Worksheets.Item(1))
+    $directorSheet = $workbook.Worksheets.Add()
+    $directorSheet.Name = "Director Summary"
+    $directorSheet.Move($changesSheet)
 
     $summarySheet.Cells.Item(1, 1).Value2 = "Manager gains and losses"
     $summarySheet.Cells.Item(1, 1).Font.Size = 16
@@ -213,31 +293,52 @@ try {
     $summarySheet.Application.ActiveWindow.SplitRow = 4
     $summarySheet.Application.ActiveWindow.FreezePanes = $true
 
+    $directorSheet.Cells.Item(1, 1).Value2 = "Director gains and losses"
+    $directorSheet.Cells.Item(1, 1).Font.Size = 16
+    $directorSheet.Cells.Item(1, 1).Font.Bold = $true
+    $directorSheet.Cells.Item(2, 1).Value2 = "Includes cross-director moves resolved through each employee's reporting chain"
+    $directorSheet.Cells.Item(2, 1).Font.Italic = $true
+    $directorHeaders = @("Director ID", "Director Name", "Positions Gained", "Positions Lost", "Net Change", "Employees Gained", "Employees Lost", "Vacancies Gained", "Vacancies Lost")
+    Set-RangeValues $directorSheet 4 1 (,[object[]]$directorHeaders)
+    $directorRows = @($directorStats.Values | Sort-Object { $_.directorName } | ForEach-Object {
+        ,([object[]]@($_.directorId, $_.directorName, $_.gainedPositions, $_.lostPositions, ($_.gainedPositions - $_.lostPositions), $_.gainedEmployees, $_.lostEmployees, $_.gainedVacancies, $_.lostVacancies))
+    })
+    if ($directorRows.Count -gt 0) { Set-RangeValues $directorSheet 5 1 $directorRows }
+    $directorHeaderRange = $directorSheet.Range("A4:I4")
+    Format-Header $directorHeaderRange
+    $directorDataEnd = [Math]::Max(5, 4 + $directorRows.Count)
+    $directorSheet.Range("A4:I$directorDataEnd").AutoFilter() | Out-Null
+    $directorSheet.Range("A:I").EntireColumn.AutoFit() | Out-Null
+    $directorSheet.Columns.Item(2).ColumnWidth = 24
+    $directorSheet.Range("C5:I$directorDataEnd").HorizontalAlignment = -4108
+
     $changesSheet.Cells.Item(1, 1).Value2 = "Proposed organization changes"
     $changesSheet.Cells.Item(1, 1).Font.Size = 16
     $changesSheet.Cells.Item(1, 1).Font.Bold = $true
     $changesSheet.Cells.Item(2, 1).Value2 = "$($movements.Count) proposed changes requiring HR review"
     $changesSheet.Cells.Item(2, 1).Font.Italic = $true
-    $changeHeaders = @("Change Type", "PCN", "Current Employee ID", "Current Employee Name", "Future Employee ID", "Future Employee Name", "Losing Manager ID", "Losing Manager Name", "Gaining Manager ID", "Gaining Manager Name", "Current Role", "Future Role", "Current Explanation", "Future Explanation")
+    $changeHeaders = @("Change Type", "PCN", "Current Employee ID", "Current Employee Name", "Future Employee ID", "Future Employee Name", "Losing Manager ID", "Losing Manager Name", "Gaining Manager ID", "Gaining Manager Name", "Current Director ID", "Current Director Name", "Future Director ID", "Future Director Name", "Current Role", "Future Role", "Current Explanation", "Future Explanation")
     Set-RangeValues $changesSheet 4 1 (,[object[]]$changeHeaders)
     $changeRows = @($movements | Sort-Object changeType, futureEmployeeName, currentEmployeeName | ForEach-Object {
-        ,([object[]]@($_.changeType, $_.pcn, $_.currentEmployeeId, $_.currentEmployeeName, $_.futureEmployeeId, $_.futureEmployeeName, $_.losingManagerId, $_.losingManagerName, $_.gainingManagerId, $_.gainingManagerName, $_.currentRole, $_.futureRole, $_.currentExplanation, $_.futureExplanation))
+        ,([object[]]@($_.changeType, $_.pcn, $_.currentEmployeeId, $_.currentEmployeeName, $_.futureEmployeeId, $_.futureEmployeeName, $_.losingManagerId, $_.losingManagerName, $_.gainingManagerId, $_.gainingManagerName, $_.currentDirectorId, $_.currentDirectorName, $_.futureDirectorId, $_.futureDirectorName, $_.currentRole, $_.futureRole, $_.currentExplanation, $_.futureExplanation))
     })
     if ($changeRows.Count -gt 0) { Set-RangeValues $changesSheet 5 1 $changeRows }
-    $changesHeaderRange = $changesSheet.Range("A4:N4")
+    $changesHeaderRange = $changesSheet.Range("A4:R4")
     Format-Header $changesHeaderRange
     $changesDataEnd = [Math]::Max(5, 4 + $changeRows.Count)
-    $changesSheet.Range("A4:N$changesDataEnd").AutoFilter() | Out-Null
-    $changesSheet.Range("A:N").EntireColumn.AutoFit() | Out-Null
+    $changesSheet.Range("A4:R$changesDataEnd").AutoFilter() | Out-Null
+    $changesSheet.Range("A:R").EntireColumn.AutoFit() | Out-Null
     $changesSheet.Columns.Item(1).ColumnWidth = 24
     $changesSheet.Columns.Item(4).ColumnWidth = 24
     $changesSheet.Columns.Item(6).ColumnWidth = 24
     $changesSheet.Columns.Item(8).ColumnWidth = 24
     $changesSheet.Columns.Item(10).ColumnWidth = 24
-    $changesSheet.Columns.Item(13).ColumnWidth = 42
-    $changesSheet.Columns.Item(14).ColumnWidth = 42
-    $changesSheet.Range("M5:N$changesDataEnd").WrapText = $true
-    $changesSheet.Range("A5:N$changesDataEnd").VerticalAlignment = -4160
+    $changesSheet.Columns.Item(12).ColumnWidth = 24
+    $changesSheet.Columns.Item(14).ColumnWidth = 24
+    $changesSheet.Columns.Item(17).ColumnWidth = 42
+    $changesSheet.Columns.Item(18).ColumnWidth = 42
+    $changesSheet.Range("Q5:R$changesDataEnd").WrapText = $true
+    $changesSheet.Range("A5:R$changesDataEnd").VerticalAlignment = -4160
     $changesSheet.Application.ActiveWindow.SplitRow = 4
     $changesSheet.Application.ActiveWindow.FreezePanes = $true
 

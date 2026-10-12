@@ -21,7 +21,7 @@
     "future": "Future organization"
   },
   "options": {
-    "directorId": "",
+    "directorIds": [],
     "includeManagersInEmployeeCount": false,
     "showEmployeeNames": true,
     "showEmployeeIds": false,

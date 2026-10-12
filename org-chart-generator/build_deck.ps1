@@ -198,54 +198,143 @@ function Get-ManagerName {
     return $Id
 }
 
-function Get-ManagerOrder {
-    param($CurrentRecords, $FutureRecords, [string]$ConfiguredDirector)
+function Get-ManagerHierarchy {
+    param($CurrentRecords, $FutureRecords, [string[]]$ConfiguredDirectors)
     $managerIds = @($CurrentRecords.managerId + $FutureRecords.managerId | Sort-Object -Unique)
     if ($managerIds.Count -eq 0) { throw "No managers were found in Current or Future" }
-    $director = $ConfiguredDirector.Trim().ToUpperInvariant()
-    if ($director -and $managerIds -notcontains $director) { throw "Configured directorId '$director' is not a manager" }
-    $allRecords = @($FutureRecords) + @($CurrentRecords)
-    if (-not $director) {
-        $managedManagers = @($allRecords | Where-Object { $managerIds -contains $_.employeeId } | ForEach-Object { $_.employeeId } | Sort-Object -Unique)
-        $roots = @($managerIds | Where-Object { $managedManagers -notcontains $_ })
-        if ($roots.Count -eq 1) { $director = $roots[0] }
-        else {
-            $director = $managerIds | Sort-Object @{ Expression = {
-                $id = $_
-                -(@($allRecords | Where-Object { $_.managerId -eq $id -and $managerIds -contains $_.employeeId }).Count)
-            } }, @{ Expression = { $_ } } | Select-Object -First 1
+    $directors = @($ConfiguredDirectors | ForEach-Object { ([string]$_).Trim().ToUpperInvariant() } | Where-Object { $_ } | Sort-Object -Unique)
+    foreach ($director in $directors) {
+        if ($managerIds -notcontains $director) { throw "Configured director ID '$director' is not a manager" }
+    }
+    if ($directors.Count -eq 0) {
+        $roots = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($stateLabel in @("current", "future")) {
+            $records = if ($stateLabel -eq "current") { @($CurrentRecords) } else { @($FutureRecords) }
+            $stateManagerIds = @($records.managerId | Sort-Object -Unique)
+            $managedManagers = @($records | Where-Object { $stateManagerIds -contains $_.employeeId } | ForEach-Object { $_.employeeId } | Sort-Object -Unique)
+            foreach ($root in @($stateManagerIds | Where-Object { $managedManagers -notcontains $_ })) { $null = $roots.Add([string]$root) }
+        }
+        $directors = @($roots | Sort-Object { Get-ManagerName $_ $CurrentRecords $FutureRecords })
+    }
+    if ($directors.Count -eq 0) { $directors = @($managerIds | Select-Object -First 1) }
+
+    function New-ParentMap {
+        param($Records)
+        $map = @{}
+        foreach ($record in $Records) {
+            $employeeId = [string]$record.employeeId
+            if ($employeeId -and $managerIds -contains $employeeId) { $map[$employeeId] = [string]$record.managerId }
+        }
+        return $map
+    }
+    function Resolve-DirectorId {
+        param([string]$ManagerId, [hashtable]$ParentMap)
+        $current = $ManagerId
+        $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        while ($current -and $visited.Add($current)) {
+            if ($directors -contains $current) { return $current }
+            if (-not $ParentMap.ContainsKey($current)) { return "" }
+            $current = [string]$ParentMap[$current]
+        }
+        return ""
+    }
+
+    $currentParents = New-ParentMap $CurrentRecords
+    $futureParents = New-ParentMap $FutureRecords
+    $currentDirectorByManager = @{}
+    $futureDirectorByManager = @{}
+    foreach ($id in $managerIds) {
+        $currentDirectorByManager[$id] = Resolve-DirectorId $id $currentParents
+        $futureDirectorByManager[$id] = Resolve-DirectorId $id $futureParents
+    }
+
+    $groups = [System.Collections.Generic.List[object]]::new()
+    $orderedManagers = [System.Collections.Generic.List[string]]::new()
+    foreach ($director in $directors) {
+        $members = @($managerIds | Where-Object {
+            $_ -notin $directors -and (($futureDirectorByManager[$_] -eq $director) -or (-not $futureDirectorByManager[$_] -and $currentDirectorByManager[$_] -eq $director))
+        } | Sort-Object { Get-ManagerName $_ $CurrentRecords $FutureRecords })
+        foreach ($member in $members) { $orderedManagers.Add([string]$member) }
+        $groups.Add([pscustomobject]@{ DirectorId = $director; Managers = $members })
+    }
+    foreach ($id in @($managerIds | Where-Object { $_ -notin $directors -and $_ -notin $orderedManagers } | Sort-Object { Get-ManagerName $_ $CurrentRecords $FutureRecords })) {
+        $orderedManagers.Add([string]$id)
+    }
+    return [pscustomobject]@{
+        Directors = @($directors)
+        ManagerGroups = @($groups)
+        OrderedManagers = @($orderedManagers)
+        CurrentDirectorByManager = $currentDirectorByManager
+        FutureDirectorByManager = $futureDirectorByManager
+    }
+}
+
+function Add-DirectorsOverviewSlide {
+    param($Presentation, [string[]]$DirectorIds, $CurrentRecords, $FutureRecords, [hashtable]$PhotoIndex, [System.Collections.Generic.HashSet[string]]$MissingPhotos, $Options)
+    $slide = $Presentation.Slides.Add($Presentation.Slides.Count + 1, $ppLayoutBlank)
+    $background = Add-FilledShape $slide $msoShapeRectangle 0 0 960 540 "#F5F7FA" "#F5F7FA"
+    $background.ZOrder(1)
+    $null = Add-TextBox $slide "Directors" 36 24 888 42 28 "#172033" $true $ppAlignLeft $Options.fontFamily
+    $null = Add-TextBox $slide "$($DirectorIds.Count) directors in the organization" 36 66 888 24 12 "#5C6778" $false $ppAlignLeft $Options.fontFamily
+    $count = [Math]::Max(1, $DirectorIds.Count)
+    $gap = 18.0
+    $cardWidth = (888.0 - ($count - 1) * $gap) / $count
+    for ($index = 0; $index -lt $DirectorIds.Count; $index++) {
+        $id = $DirectorIds[$index]
+        $name = Get-ManagerName $id $CurrentRecords $FutureRecords
+        $left = 36 + $index * ($cardWidth + $gap)
+        $null = Add-FilledShape $slide $msoShapeRoundedRectangle $left 116 $cardWidth 330 "#FFFFFF" "#D9E0E8"
+        $person = [pscustomobject]@{ id = $id; name = $name }
+        $portrait = Add-Portrait $slide $person ($left + ($cardWidth - 96) / 2) 154 96 "#203864" $PhotoIndex $MissingPhotos $Options.fontFamily
+        $null = Add-TextBox $slide $name ($left + 20) 270 ($cardWidth - 40) 36 20 "#172033" $true $ppAlignCenter $Options.fontFamily
+        $null = Add-TextBox $slide "Director, Employee ID $id" ($left + 20) 308 ($cardWidth - 40) 24 10 "#5C6778" $false $ppAlignCenter $Options.fontFamily
+        $currentCount = @($CurrentRecords | Where-Object { $_.managerId -eq $id }).Count
+        $futureCount = @($FutureRecords | Where-Object { $_.managerId -eq $id }).Count
+        $null = Add-TextBox $slide "Current direct reports: $currentCount`nFuture direct reports: $futureCount" ($left + 20) 354 ($cardWidth - 40) 54 12 "#303A4A" $false $ppAlignCenter $Options.fontFamily
+    }
+}
+
+function Add-ManagersOverviewSlide {
+    param($Presentation, $Hierarchy, $CurrentRecords, $FutureRecords, [hashtable]$PhotoIndex, [System.Collections.Generic.HashSet[string]]$MissingPhotos, $Options)
+    $slide = $Presentation.Slides.Add($Presentation.Slides.Count + 1, $ppLayoutBlank)
+    $background = Add-FilledShape $slide $msoShapeRectangle 0 0 960 540 "#F5F7FA" "#F5F7FA"
+    $background.ZOrder(1)
+    $null = Add-TextBox $slide "Managers" 36 24 888 42 28 "#172033" $true $ppAlignLeft $Options.fontFamily
+    $null = Add-TextBox $slide "Managers grouped by their future-state director" 36 66 888 24 12 "#5C6778" $false $ppAlignLeft $Options.fontFamily
+    $groups = @($Hierarchy.ManagerGroups)
+    $columnCount = [Math]::Max(1, $groups.Count)
+    $gap = 14.0
+    $columnWidth = (888.0 - ($columnCount - 1) * $gap) / $columnCount
+    for ($groupIndex = 0; $groupIndex -lt $groups.Count; $groupIndex++) {
+        $group = $groups[$groupIndex]
+        $left = 36 + $groupIndex * ($columnWidth + $gap)
+        $directorName = Get-ManagerName $group.DirectorId $CurrentRecords $FutureRecords
+        $null = Add-FilledShape $slide $msoShapeRoundedRectangle $left 112 $columnWidth 382 "#FFFFFF" "#D9E0E8"
+        $null = Add-FilledShape $slide $msoShapeRoundedRectangle $left 112 $columnWidth 42 "#203864" "#203864"
+        $null = Add-TextBox $slide $directorName ($left + 8) 118 ($columnWidth - 16) 28 14 "#FFFFFF" $true $ppAlignCenter $Options.fontFamily
+        $managers = @($group.Managers)
+        if ($managers.Count -eq 0) {
+            $null = Add-TextBox $slide "No managers assigned" ($left + 14) 184 ($columnWidth - 28) 40 12 "#6B7280" $false $ppAlignCenter $Options.fontFamily
+            continue
+        }
+        $rowHeight = [Math]::Min(68, 322 / [Math]::Max(1, $managers.Count))
+        for ($managerIndex = 0; $managerIndex -lt $managers.Count; $managerIndex++) {
+            $managerId = $managers[$managerIndex]
+            $managerName = Get-ManagerName $managerId $CurrentRecords $FutureRecords
+            $top = 164 + $managerIndex * $rowHeight
+            $person = [pscustomobject]@{ id = $managerId; name = $managerName }
+            $portraitSize = [Math]::Min(46, $rowHeight - 8)
+            $null = Add-Portrait $slide $person ($left + 14) ($top + 4) $portraitSize "#44546A" $PhotoIndex $MissingPhotos $Options.fontFamily
+            $null = Add-TextBox $slide $managerName ($left + 72) $top ($columnWidth - 86) 24 12 "#172033" $true $ppAlignLeft $Options.fontFamily
+            $currentDirector = [string]$Hierarchy.CurrentDirectorByManager[$managerId]
+            $futureDirector = [string]$Hierarchy.FutureDirectorByManager[$managerId]
+            $detail = "Employee ID $managerId"
+            if ($currentDirector -and $futureDirector -and $currentDirector -ne $futureDirector) {
+                $detail += ", moving from $(Get-ManagerName $currentDirector $CurrentRecords $FutureRecords)"
+            }
+            $null = Add-TextBox $slide $detail ($left + 72) ($top + 24) ($columnWidth - 86) 22 8 "#5C6778" $false $ppAlignLeft $Options.fontFamily
         }
     }
-    $children = @{}
-    foreach ($id in $managerIds) { $children[$id] = [System.Collections.Generic.List[string]]::new() }
-    foreach ($id in $managerIds) {
-        if ($id -eq $director) { continue }
-        $employeeRecord = @($FutureRecords | Where-Object { $_.employeeId -eq $id } | Select-Object -First 1)
-        if ($employeeRecord.Count -eq 0) { $employeeRecord = @($CurrentRecords | Where-Object { $_.employeeId -eq $id } | Select-Object -First 1) }
-        if ($employeeRecord.Count -gt 0) {
-            $parent = [string]$employeeRecord[0].managerId
-            if ($children.ContainsKey($parent) -and $parent -ne $id) { $children[$parent].Add($id) }
-        }
-    }
-    foreach ($id in $managerIds) {
-        $sorted = @($children[$id] | Sort-Object { Get-ManagerName $_ $CurrentRecords $FutureRecords })
-        $children[$id].Clear()
-        foreach ($child in $sorted) { $children[$id].Add($child) }
-    }
-    $ordered = [System.Collections.Generic.List[string]]::new()
-    $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    $queue = [System.Collections.Generic.Queue[string]]::new()
-    $queue.Enqueue($director)
-    while ($queue.Count -gt 0) {
-        $id = $queue.Dequeue()
-        if (-not $visited.Add($id)) { continue }
-        $ordered.Add($id)
-        foreach ($child in $children[$id]) { $queue.Enqueue($child) }
-    }
-    foreach ($id in $managerIds | Sort-Object { Get-ManagerName $_ $CurrentRecords $FutureRecords }) {
-        if ($visited.Add($id)) { $ordered.Add($id) }
-    }
-    return [pscustomobject]@{ Director = $director; Ordered = @($ordered) }
 }
 
 function Get-RolePages {
@@ -306,7 +395,7 @@ function Add-TeamSlide {
         [int]$PageNumber,
         [int]$TotalPages,
         $Panels,
-        [string]$DirectorId,
+        [string[]]$DirectorIds,
         $RoleColors,
         [hashtable]$PhotoIndex,
         [System.Collections.Generic.HashSet[string]]$MissingPhotos,
@@ -320,7 +409,9 @@ function Add-TeamSlide {
     $null = Add-TextBox $slide "$ManagerName, $StateTitle$titleSuffix" 36 10 690 32 $titleFontSize "#172033" $true $ppAlignLeft $Options.fontFamily
     $count = $Members.Count
     $vacantCount = @($Members | Where-Object { $_.PSObject.Properties.Name -contains "isVacant" -and [bool]$_.isVacant }).Count
-    $countLabel = if ($vacantCount -gt 0) { "$count positions, $vacantCount vacant" } else { "$count employees" }
+    $positionWord = if ($count -eq 1) { "position" } else { "positions" }
+    $employeeWord = if ($count -eq 1) { "employee" } else { "employees" }
+    $countLabel = if ($vacantCount -gt 0) { "$count $positionWord, $vacantCount vacant" } else { "$count $employeeWord" }
     $countText = if ($StateLabel -eq "future") {
         $delta = $FutureCount - $CurrentCount
         $deltaText = if ($delta -gt 0) { "+$delta" } else { [string]$delta }
@@ -332,11 +423,12 @@ function Add-TeamSlide {
     $null = Add-TextBox $slide $countText 730 10 194 32 14 $countColor $true $ppAlignRight $Options.fontFamily
 
     $null = Add-FilledShape $slide $msoShapeRoundedRectangle 36 50 888 70 "#FFFFFF" "#D9E0E8"
-    $managerAccent = if ($ManagerId -eq $DirectorId) { "#203864" } else { "#44546A" }
+    $isDirector = $DirectorIds -contains $ManagerId
+    $managerAccent = if ($isDirector) { "#203864" } else { "#44546A" }
     $managerPerson = [pscustomobject]@{ id = $ManagerId; name = $ManagerName }
     $null = Add-Portrait $slide $managerPerson 51 59 52 $managerAccent $PhotoIndex $MissingPhotos $Options.fontFamily
     $null = Add-TextBox $slide $ManagerName 119 57 523 25 18 "#172033" $true $ppAlignLeft $Options.fontFamily
-    $roleText = if ($ManagerId -eq $DirectorId) { "Director" } else { $ManagerRole }
+    $roleText = if ($isDirector) { "Director" } else { $ManagerRole }
     $null = Add-TextBox $slide "$roleText, Employee ID $ManagerId" 119 84 523 20 9 "#5C6778" $false $ppAlignLeft $Options.fontFamily
 
     if ($Panels.Count -eq 0) {
@@ -460,8 +552,13 @@ if ($options.maxRowsPerCategory -lt 1 -or $options.maxRowsPerCategory -gt 4) { t
 
 $currentRecords = @($orgData.current)
 $futureRecords = @($orgData.future)
-$configuredDirector = if ($settingsData.options.directorId) { [string]$settingsData.options.directorId } else { "" }
-$orderInfo = Get-ManagerOrder $currentRecords $futureRecords $configuredDirector
+$configuredDirectors = @()
+if ($settingsData.options.PSObject.Properties.Name -contains "directorIds" -and $null -ne $settingsData.options.directorIds) {
+    $configuredDirectors = @($settingsData.options.directorIds | ForEach-Object { [string]$_ })
+} elseif ($settingsData.options.PSObject.Properties.Name -contains "directorId" -and $settingsData.options.directorId) {
+    $configuredDirectors = @([string]$settingsData.options.directorId)
+}
+$hierarchy = Get-ManagerHierarchy $currentRecords $futureRecords $configuredDirectors
 $powerPoint = $null
 $presentation = $null
 try {
@@ -472,7 +569,9 @@ try {
     $presentation.PageSetup.SlideWidth = 960
     $presentation.PageSetup.SlideHeight = 540
 
-    foreach ($managerId in $orderInfo.Ordered) {
+    Add-DirectorsOverviewSlide $presentation $hierarchy.Directors $currentRecords $futureRecords $photoIndex $missingPhotos $options
+
+    foreach ($managerId in $hierarchy.Directors) {
         $managerName = Get-ManagerName $managerId $currentRecords $futureRecords
         foreach ($stateLabel in @("current", "future")) {
             $records = if ($stateLabel -eq "current") { $currentRecords } else { $futureRecords }
@@ -484,7 +583,26 @@ try {
             $pages = @(Get-RolePages $members $options.maxCategoriesPerSlide $options.maxPeoplePerRow $options.maxRowsPerCategory)
             $stateTitle = if ($stateLabel -eq "current") { [string]$settingsData.titles.current } else { [string]$settingsData.titles.future }
             for ($pageIndex = 0; $pageIndex -lt $pages.Count; $pageIndex++) {
-                Add-TeamSlide $presentation $managerId $managerName $managerRole $members $stateLabel $stateTitle $currentCount $futureCount ($pageIndex + 1) $pages.Count $pages[$pageIndex].Panels $orderInfo.Director $orgData.roleColors $photoIndex $missingPhotos $options
+                Add-TeamSlide $presentation $managerId $managerName $managerRole $members $stateLabel $stateTitle $currentCount $futureCount ($pageIndex + 1) $pages.Count $pages[$pageIndex].Panels $hierarchy.Directors $orgData.roleColors $photoIndex $missingPhotos $options
+            }
+        }
+    }
+
+    Add-ManagersOverviewSlide $presentation $hierarchy $currentRecords $futureRecords $photoIndex $missingPhotos $options
+
+    foreach ($managerId in $hierarchy.OrderedManagers) {
+        $managerName = Get-ManagerName $managerId $currentRecords $futureRecords
+        foreach ($stateLabel in @("current", "future")) {
+            $records = if ($stateLabel -eq "current") { $currentRecords } else { $futureRecords }
+            $members = @($records | Where-Object { $_.managerId -eq $managerId } | Sort-Object role, employeeName)
+            $managerRecord = @($records | Where-Object { $_.employeeId -eq $managerId } | Select-Object -First 1)
+            $managerRole = if ($managerRecord.Count -gt 0) { [string]$managerRecord[0].role } else { "Manager" }
+            $currentCount = @($currentRecords | Where-Object { $_.managerId -eq $managerId }).Count
+            $futureCount = @($futureRecords | Where-Object { $_.managerId -eq $managerId }).Count
+            $pages = @(Get-RolePages $members $options.maxCategoriesPerSlide $options.maxPeoplePerRow $options.maxRowsPerCategory)
+            $stateTitle = if ($stateLabel -eq "current") { [string]$settingsData.titles.current } else { [string]$settingsData.titles.future }
+            for ($pageIndex = 0; $pageIndex -lt $pages.Count; $pageIndex++) {
+                Add-TeamSlide $presentation $managerId $managerName $managerRole $members $stateLabel $stateTitle $currentCount $futureCount ($pageIndex + 1) $pages.Count $pages[$pageIndex].Panels $hierarchy.Directors $orgData.roleColors $photoIndex $missingPhotos $options
             }
         }
     }

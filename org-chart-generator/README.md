@@ -2,13 +2,12 @@
 
 This tool creates a manager-by-manager PowerPoint from an Excel workbook:
 
-1. Director, current organization
-2. Director, future organization
-3. First manager, current organization
-4. First manager, future organization
-5. Remaining managers in reporting order, with current immediately followed by future
+1. Directors overview
+2. Each director's current and future organization
+3. Managers overview grouped by future-state director
+4. Each manager's current and future organization
 
-Each slide shows one manager and that manager's employees. Employees appear inside role-colored groups with their photos. Future slides show the headcount change from the same manager's current team. Photo filenames must contain the employee's four-character ID, such as `A123 Jane Smith.jpg` or `A123.jpg`.
+The deck begins with a Directors overview, followed by each director's Current and Future slides. A Managers overview then groups all managers under their future-state director, followed by each manager's Current and Future slides. Employees appear inside role-colored groups with their photos. Future slides show the headcount change from the same manager's current team. Photo filenames must contain the employee's four-character ID, such as `A123 Jane Smith.jpg` or `A123.jpg`.
 
 ## Excel structure
 
@@ -32,6 +31,8 @@ Employee and manager IDs must contain exactly four letters or numbers. Employee 
 ```powershell
 .\run.ps1
 ```
+
+You can also right-click `run.ps1` and choose **Run with PowerShell**. The scripts are compatible with Windows PowerShell 5.1 and PowerShell 7. If Windows blocks local scripts, open PowerShell in this folder and use `powershell.exe -ExecutionPolicy Bypass -File .\run.ps1`.
 
 `Org Chart Example.xlsx` contains a populated sample with a director, three managers, multiple roles, and current-to-future reporting changes. To generate a deck from it, copy `settings.example.json` to `settings.json` and change `workbookPath` to `./Org Chart Example.xlsx`.
 
@@ -57,7 +58,7 @@ Relative paths in the settings file resolve from the folder containing that sett
 ## Important settings
 
 - `includeManagersInEmployeeCount`: Adds the manager to the displayed team count when the manager also appears as an employee in the same sheet.
-- `directorId`: Optional four-character ID for the director who should appear first. Leave blank to infer the top manager from the reporting relationships.
+- `directorIds`: Optional array of four-character director IDs, such as `["D001", "D002"]`. Leave it empty to infer every top-level director from the Current and Future reporting relationships. The legacy single `directorId` setting is still accepted.
 - `showEmployeeNames`: Shows employee names beneath photos.
 - `showEmployeeIds`: Shows IDs with names.
 - `maxPeoplePerRow`: Maximum employee photos per category row. Limited to 5.
@@ -66,7 +67,7 @@ Relative paths in the settings file resolve from the folder containing that sett
 - `employeeNameFontSize`: Font size used beneath employee photos.
 - `failOnMissingPhotos`: Stops instead of using an initials placeholder.
 
-Large teams and teams with more than four categories automatically continue onto additional slides. Current slides remain directly followed by their current continuations, then the manager's future slides and future continuations.
+Large teams and teams with more than four categories automatically continue onto additional slides. Current slides remain directly followed by their current continuations, then the manager's future slides and future continuations. Managers are grouped using their future-state director, so a manager moving between directors appears in the destination director's section with a move note on the Managers overview.
 
 Category layout adapts automatically:
 
@@ -77,4 +78,4 @@ Category layout adapts automatically:
 
 The generator writes a missing-photo report next to the PowerPoint using the suffix `.missing-photos.txt`.
 
-It also creates a separate HR handoff workbook at `hrOutputPath`. `Manager Summary` lists positions, employees, and vacancies gained or lost by each manager. `Employee Changes` lists manager transfers, additions, removals, staffing changes, vacancy changes, and role changes by comparing Current with Future. If `hrOutputPath` is omitted, the file is created beside the PowerPoint with ` HR Handoff.xlsx` appended to the PowerPoint name.
+It also creates a separate HR handoff workbook at `hrOutputPath`. `Director Summary` and `Manager Summary` list positions, employees, and vacancies gained or lost. `Employee Changes` lists current and future director assignments as well as manager transfers, director transfers, additions, removals, staffing changes, vacancy changes, and role changes by comparing Current with Future. If `hrOutputPath` is omitted, the file is created beside the PowerPoint with ` HR Handoff.xlsx` appended to the PowerPoint name.
