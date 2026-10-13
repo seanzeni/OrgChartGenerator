@@ -21,6 +21,8 @@ $ppAlignLeft = 1
 $ppAlignCenter = 2
 $ppAlignRight = 3
 $ppMouseClick = 1
+$ppMouseOver = 2
+$ppActionNone = 0
 $ppActionHyperlink = 7
 $msoAnchorMiddle = 3
 $msoAutoSizeTextToFitShape = 2
@@ -130,8 +132,19 @@ function Add-Portrait {
     $personName = if ($Person.PSObject.Properties.Name -contains "name") { [string]$Person.name } else { [string]$Person.employeeName }
     $isVacant = $Person.PSObject.Properties.Name -contains "isVacant" -and [bool]$Person.isVacant
     if ($isVacant) {
-        $portrait = Add-FilledShape $Slide $msoShapeOval $Left $Top $Size $Size "#FFFFFF" $Accent
-        $portrait.Line.DashStyle = 2
+        $portrait = Add-FilledShape $Slide $msoShapeOval $Left $Top $Size $Size "#FFFFFF" "#D62828"
+        $portrait.Line.Weight = 2.25
+        $portrait.TextFrame2.MarginLeft = 0
+        $portrait.TextFrame2.MarginRight = 0
+        $portrait.TextFrame2.MarginTop = 0
+        $portrait.TextFrame2.MarginBottom = 0
+        $portrait.TextFrame2.VerticalAnchor = $msoAnchorMiddle
+        $portrait.TextFrame2.TextRange.Text = "REQ"
+        $portrait.TextFrame2.TextRange.Font.Name = $FontName
+        $portrait.TextFrame2.TextRange.Font.Size = [Math]::Max(8, $Size * 0.25)
+        $portrait.TextFrame2.TextRange.Font.Bold = $msoTrue
+        $portrait.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = Convert-HexToOfficeColor "#D62828"
+        $portrait.TextFrame2.TextRange.ParagraphFormat.Alignment = $ppAlignCenter
         return $portrait
     }
     $photoPath = if ($PhotoIndex.ContainsKey($personId)) { $PhotoIndex[$personId] } else { $null }
@@ -149,7 +162,20 @@ function Add-Portrait {
     if ($null -eq $portrait) {
         $null = $MissingPhotos.Add("$personId`t$personName")
         $portrait = Add-FilledShape $Slide $msoShapeOval $Left $Top $Size $Size $Accent $Accent
-        $null = Add-TextBox $Slide (Get-Initials $personName) $Left $Top $Size $Size ([Math]::Max(9, $Size * 0.34)) (Get-TextColorHex $Accent) $true $ppAlignCenter $FontName
+        $portrait.TextFrame2.MarginLeft = 0
+        $portrait.TextFrame2.MarginRight = 0
+        $portrait.TextFrame2.MarginTop = 0
+        $portrait.TextFrame2.MarginBottom = 0
+        $portrait.TextFrame2.WordWrap = $msoFalse
+        $portrait.TextFrame2.VerticalAnchor = $msoAnchorMiddle
+        $portrait.TextFrame2.TextRange.Text = Get-Initials $personName
+        $portrait.TextFrame2.TextRange.Font.Name = $FontName
+        $portrait.TextFrame2.TextRange.Font.Size = [Math]::Max(9, $Size * 0.34)
+        $portrait.TextFrame2.TextRange.Font.Bold = $msoTrue
+        $portrait.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = Convert-HexToOfficeColor (Get-TextColorHex $Accent)
+        $portrait.TextFrame2.TextRange.ParagraphFormat.Alignment = $ppAlignCenter
+        $portrait.TextFrame2.TextRange.ParagraphFormat.SpaceBefore = 0
+        $portrait.TextFrame2.TextRange.ParagraphFormat.SpaceAfter = 0
     }
     return $portrait
 }
@@ -164,13 +190,19 @@ function Add-ExplanationCue {
     }
     $Shape.AlternativeText = $Explanation
     try {
+        $clickAction = $Shape.ActionSettings.Item($ppMouseClick)
+        $clickAction.Action = $ppActionNone
+        [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($clickAction) | Out-Null
+
+        # PowerPoint stores ScreenTips on an action. Attach it to mouse-over and
+        # leave mouse-click disabled so highlighted shapes are not clickable.
         $subAddress = "$($Slide.SlideID),$($Slide.SlideIndex),$($Slide.Name)"
-        $action = $Shape.ActionSettings.Item($ppMouseClick)
-        $action.Action = $ppActionHyperlink
-        $action.Hyperlink.Address = ""
-        $action.Hyperlink.SubAddress = $subAddress
-        $action.Hyperlink.ScreenTip = $Explanation
-        [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($action) | Out-Null
+        $hoverAction = $Shape.ActionSettings.Item($ppMouseOver)
+        $hoverAction.Action = $ppActionHyperlink
+        $hoverAction.Hyperlink.Address = ""
+        $hoverAction.Hyperlink.SubAddress = $subAddress
+        $hoverAction.Hyperlink.ScreenTip = $Explanation
+        [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($hoverAction) | Out-Null
     } catch {
         # AlternativeText remains available if this PowerPoint version rejects shape ScreenTips.
     }
@@ -512,15 +544,18 @@ function Add-TeamSlide {
             $photoLeft = $tileLeft + ($columnWidth - $photoSize) / 2
             $member = $panel.Members[$index]
             $portrait = Add-Portrait $slide $member $photoLeft $tileTop $photoSize $color $PhotoIndex $MissingPhotos $Options.fontFamily
-            $explanation = if ($member.PSObject.Properties.Name -contains "explanation") { [string]$member.explanation } else { "" }
-            Add-ExplanationCue $slide $portrait $explanation
             $isVacant = $member.PSObject.Properties.Name -contains "isVacant" -and [bool]$member.isVacant
             $pcn = if ($member.PSObject.Properties.Name -contains "pcn") { [string]$member.pcn } else { "" }
-            $label = if ($isVacant) { "Vacant`nPCN $pcn" } else { [string]$member.employeeName }
+            $explanation = if ($member.PSObject.Properties.Name -contains "explanation") { [string]$member.explanation } else { "" }
+            $tooltip = if ($isVacant) {
+                if ([string]::IsNullOrWhiteSpace($explanation)) { "PCN: $pcn" } else { "PCN: $pcn`n$explanation" }
+            } else { $explanation }
+            Add-ExplanationCue $slide $portrait $tooltip
+            $label = if ($isVacant) { $pcn } else { [string]$member.employeeName }
             if (-not $isVacant -and [bool]$Options.showEmployeeIds) { $label = "$label`n$($member.employeeId)" }
             if ($isVacant -or [bool]$Options.showEmployeeNames -or [bool]$Options.showEmployeeIds) {
                 $labelShape = Add-TextBox $slide $label ($tileLeft + 1) ($tileTop + $photoSize + 2) ($columnWidth - 2) ([Math]::Min(28, $rowHeight - $photoSize - 3)) $nameFontSize "#303A4A" $false $ppAlignCenter $Options.fontFamily
-                Add-ExplanationCue $slide $labelShape $explanation $false
+                Add-ExplanationCue $slide $labelShape $tooltip $false
             }
         }
     }

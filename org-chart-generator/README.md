@@ -12,20 +12,19 @@ The deck begins with a Directors overview, followed by each director's Current a
 ## Excel structure
 
 - `Employees`: Enter each person once with Employee ID, Employee Name, and the Manager selector. Mark managers with `☑ Yes`.
-- `Current`: Select an employee name from the alphabetical dropdown; the Employee ID fills automatically. Then select the manager and role for the current organization. For an empty seat, leave Employee Name blank and enter its PCN.
-- `Future`: Select an employee name from the alphabetical dropdown; the Employee ID fills automatically. Then select the manager and role for the future organization. For an empty seat, leave Employee Name blank and enter its PCN.
+- `Org`: Every employee entered on Employees automatically appears here. Select current and future manager names from alphabetical dropdowns; the corresponding manager IDs fill automatically. Select the current and future roles in the same row.
 - `Role Settings`: Maintain role names and recolor the Slide Color cells. The generator reads the actual Excel fill color.
 
-Employee and manager IDs must contain exactly four letters or numbers. Employee names are selected from an alphabetical dropdown on Current and Future, and the corresponding Employee ID is filled automatically.
+Employee and manager IDs must contain exactly four letters or numbers. Manager names on Org come from employees marked `☑ Yes` and appear alphabetically.
 
-`PCN` identifies a position and is required when no employee is assigned. `Explanation` is optional. When present, the generated slide gives that employee or vacant position a red circle outline. Hover over the circle or its label in PowerPoint to see the explanation as a ScreenTip.
+`PCN` identifies an open position. Add vacancy rows beneath the automatically populated employee rows on Org and complete the applicable current or future fields. Vacancies appear as a red `REQ` circle. Mouse over the circle or its PCN label to see the PCN and explanation. Employee explanations also add a red outline and mouse-over ScreenTip. These shapes have no mouse-click action.
 
 ## Setup
 
 1. Enter your organization data in `Org Chart Data Template.xlsx`.
 2. Copy `settings.example.json` to `settings.json`.
 3. Set `photoFolder`. The example settings already point to the included workbook and create `Org Chart Output.pptx` in this folder.
-4. Update the column mappings only if you rename the Current or Future input headers.
+4. Update the column mappings only if you rename the Org input headers.
 5. Run from PowerShell:
 
 ```powershell
@@ -34,7 +33,7 @@ Employee and manager IDs must contain exactly four letters or numbers. Employee 
 
 You can also right-click `run.ps1` and choose **Run with PowerShell**. The scripts are compatible with Windows PowerShell 5.1 and PowerShell 7. If Windows blocks local scripts, open PowerShell in this folder and use `powershell.exe -ExecutionPolicy Bypass -File .\run.ps1`.
 
-`Org Chart Example.xlsx` contains a populated sample with a director, three managers, multiple roles, and current-to-future reporting changes. To generate a deck from it, copy `settings.example.json` to `settings.json` and change `workbookPath` to `./Org Chart Example.xlsx`.
+`Org Chart Example.xlsx` contains a populated sample with two directors, three managers, multiple roles, an open PCN, and current-to-future reporting changes. To generate a deck from it, copy `settings.example.json` to `settings.json` and change `workbookPath` to `./Org Chart Example.xlsx`.
 
 The default workflow uses PowerShell plus Microsoft Excel and PowerPoint desktop automation. Python, Node.js, Codex, and private packages are not required.
 

@@ -185,6 +185,81 @@ function Read-StateSheet {
     return $records
 }
 
+function Read-OrgState {
+    param(
+        $Workbook,
+        [string]$SheetName,
+        [ValidateSet("current", "future")]
+        [string]$State,
+        $Columns,
+        [hashtable]$Employees,
+        [hashtable]$RoleColors
+    )
+    $sheet = Get-Worksheet $Workbook $SheetName
+    $employeeHeader = if ($Columns.employeeId) { [string]$Columns.employeeId } else { "Employee ID" }
+    $pcnHeader = if ($Columns.pcn) { [string]$Columns.pcn } else { "PCN" }
+    $managerNameProperty = "${State}ManagerName"
+    $managerIdProperty = "${State}ManagerId"
+    $roleProperty = "${State}Role"
+    $explanationProperty = "${State}Explanation"
+    $stateLabel = ($State.Substring(0,1).ToUpperInvariant()) + $State.Substring(1)
+    $managerNameHeader = if ($Columns.PSObject.Properties.Name -contains $managerNameProperty -and $Columns.$managerNameProperty) { [string]$Columns.$managerNameProperty } else { "$stateLabel Manager Name" }
+    $managerIdHeader = if ($Columns.PSObject.Properties.Name -contains $managerIdProperty -and $Columns.$managerIdProperty) { [string]$Columns.$managerIdProperty } else { "$stateLabel Manager ID" }
+    $roleHeader = if ($Columns.PSObject.Properties.Name -contains $roleProperty -and $Columns.$roleProperty) { [string]$Columns.$roleProperty } else { "$stateLabel Role Type" }
+    $explanationHeader = if ($Columns.PSObject.Properties.Name -contains $explanationProperty -and $Columns.$explanationProperty) { [string]$Columns.$explanationProperty } else { "$stateLabel Explanation" }
+    $headers = Get-HeaderMap $sheet @($employeeHeader, $pcnHeader, $managerNameHeader, $managerIdHeader, $roleHeader, $explanationHeader)
+    $employeesByName = @{}
+    foreach ($employee in $Employees.Values) {
+        $key = ([string]$employee.name).Trim().ToLowerInvariant()
+        if ($employeesByName.ContainsKey($key)) { throw "Employees contains duplicate name '$($employee.name)'. Manager-name dropdowns require unique employee names." }
+        $employeesByName[$key] = $employee
+    }
+    $records = [System.Collections.Generic.List[object]]::new()
+    $seen = @{}
+    $lastRow = [int]$sheet.UsedRange.Rows.Count
+    for ($row = 2; $row -le $lastRow; $row++) {
+        $employeeId = (Get-NormalizedText $sheet.Cells.Item($row, $headers[$employeeHeader.ToLowerInvariant()]).Value2).ToUpperInvariant()
+        $pcn = Get-NormalizedText $sheet.Cells.Item($row, $headers[$pcnHeader.ToLowerInvariant()]).Value2
+        $managerName = Get-NormalizedText $sheet.Cells.Item($row, $headers[$managerNameHeader.ToLowerInvariant()]).Value2
+        $managerId = (Get-NormalizedText $sheet.Cells.Item($row, $headers[$managerIdHeader.ToLowerInvariant()]).Value2).ToUpperInvariant()
+        $role = Get-NormalizedText $sheet.Cells.Item($row, $headers[$roleHeader.ToLowerInvariant()]).Value2
+        $explanation = Get-NormalizedText $sheet.Cells.Item($row, $headers[$explanationHeader.ToLowerInvariant()]).Value2
+        if (-not $managerName -and -not $managerId -and -not $role -and -not $explanation) { continue }
+        if ($employeeId) { Assert-FourCharacterId $employeeId "employee ID" $SheetName $row }
+        elseif (-not $pcn) { throw "Sheet '$SheetName', row $row`: enter an employee or a PCN for the vacant position" }
+        if ($employeeId -and -not $Employees.ContainsKey($employeeId)) { throw "Sheet '$SheetName', row $row`: employee ID '$employeeId' is not on Employees" }
+        if ($managerName) {
+            $managerKey = $managerName.ToLowerInvariant()
+            if (-not $employeesByName.ContainsKey($managerKey)) { throw "Sheet '$SheetName', row $row`: manager '$managerName' is not on Employees" }
+            $selectedManagerId = [string]$employeesByName[$managerKey].id
+            if ($managerId -and $managerId -ne $selectedManagerId) { throw "Sheet '$SheetName', row $row`: manager name '$managerName' does not match manager ID '$managerId'" }
+            $managerId = $selectedManagerId
+        }
+        Assert-FourCharacterId $managerId "manager ID" $SheetName $row
+        if (-not $Employees.ContainsKey($managerId)) { throw "Sheet '$SheetName', row $row`: manager ID '$managerId' is not on Employees" }
+        if (-not [bool]$Employees[$managerId].isManager) { throw "Sheet '$SheetName', row $row`: '$managerId' is not marked as a manager" }
+        if (-not $role) { $role = "Unspecified" }
+        $roleKey = $role.ToLowerInvariant()
+        if (-not $RoleColors.ContainsKey($roleKey)) { throw "Sheet '$SheetName', row $row`: role '$role' is not on Role Settings" }
+        $recordKey = if ($employeeId) { "EMP:$employeeId" } else { "PCN:$($pcn.ToUpperInvariant())" }
+        if ($seen.ContainsKey($recordKey)) { throw "Sheet '$SheetName' has duplicate '$recordKey' in $State data on rows $($seen[$recordKey]) and $row" }
+        $seen[$recordKey] = $row
+        $records.Add([ordered]@{
+            employeeId = $employeeId
+            employeeName = if ($employeeId) { $Employees[$employeeId].name } else { "Vacant" }
+            managerId = $managerId
+            managerName = $Employees[$managerId].name
+            role = $RoleColors[$roleKey].name
+            pcn = $pcn
+            explanation = $explanation
+            isVacant = -not [bool]$employeeId
+            sourceRow = $row
+        })
+    }
+    [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($sheet) | Out-Null
+    return $records
+}
+
 $settingsPath = [System.IO.Path]::GetFullPath($Settings)
 $settingsData = Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json
 $settingsDirectory = Split-Path -Parent $settingsPath
@@ -216,8 +291,16 @@ try {
         workbookPath = $workbookPath
         roleColors = $roleOutput
         employees = @($employeeMap.Values)
-        current = @(Read-StateSheet $workbook ([string]$settingsData.sheets.current) $settingsData.columns $employeeMap $roleMap)
-        future = @(Read-StateSheet $workbook ([string]$settingsData.sheets.future) $settingsData.columns $employeeMap $roleMap)
+        current = if ($settingsData.sheets.PSObject.Properties.Name -contains "org" -and $settingsData.sheets.org) {
+            @(Read-OrgState $workbook ([string]$settingsData.sheets.org) "current" $settingsData.columns $employeeMap $roleMap)
+        } else {
+            @(Read-StateSheet $workbook ([string]$settingsData.sheets.current) $settingsData.columns $employeeMap $roleMap)
+        }
+        future = if ($settingsData.sheets.PSObject.Properties.Name -contains "org" -and $settingsData.sheets.org) {
+            @(Read-OrgState $workbook ([string]$settingsData.sheets.org) "future" $settingsData.columns $employeeMap $roleMap)
+        } else {
+            @(Read-StateSheet $workbook ([string]$settingsData.sheets.future) $settingsData.columns $employeeMap $roleMap)
+        }
     }
     $outputPath = [System.IO.Path]::GetFullPath($Output)
     $payload | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $outputPath -Encoding UTF8

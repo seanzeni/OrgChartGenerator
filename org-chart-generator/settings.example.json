@@ -5,16 +5,20 @@
   "hrOutputPath": "./Org Chart HR Handoff.xlsx",
   "sheets": {
     "employees": "Employees",
-    "current": "Current",
-    "future": "Future",
+    "org": "Org",
     "roles": "Role Settings"
   },
   "columns": {
     "employeeId": "Employee ID",
-    "managerId": "Manager ID",
-    "role": "Role Type",
     "pcn": "PCN",
-    "explanation": "Explanation"
+    "currentManagerName": "Current Manager Name",
+    "currentManagerId": "Current Manager ID",
+    "currentRole": "Current Role Type",
+    "currentExplanation": "Current Explanation",
+    "futureManagerName": "Future Manager Name",
+    "futureManagerId": "Future Manager ID",
+    "futureRole": "Future Role Type",
+    "futureExplanation": "Future Explanation"
   },
   "titles": {
     "current": "Current organization",

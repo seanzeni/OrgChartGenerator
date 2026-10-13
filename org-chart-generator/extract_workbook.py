@@ -197,6 +197,88 @@ def read_state_sheet(workbook, sheet_name, columns, employees, role_colors):
     return records
 
 
+def read_org_state(workbook, sheet_name, state, columns, employees, role_colors):
+    if sheet_name not in workbook.sheetnames:
+        raise ValueError(f"Sheet '{sheet_name}' was not found")
+    sheet = workbook[sheet_name]
+    state_label = state.title()
+    employee_label = columns.get("employeeId", "Employee ID")
+    pcn_label = columns.get("pcn", "PCN")
+    manager_name_label = columns.get(f"{state}ManagerName", f"{state_label} Manager Name")
+    manager_id_label = columns.get(f"{state}ManagerId", f"{state_label} Manager ID")
+    role_label = columns.get(f"{state}Role", f"{state_label} Role Type")
+    explanation_label = columns.get(f"{state}Explanation", f"{state_label} Explanation")
+    lookup = require_columns(sheet, [
+        employee_label, pcn_label, manager_name_label, manager_id_label,
+        role_label, explanation_label,
+    ])
+    employees_by_name = {}
+    for employee in employees.values():
+        key = employee["name"].casefold()
+        if key in employees_by_name:
+            raise ValueError(
+                f"Employees contains duplicate name '{employee['name']}'. "
+                "Manager-name dropdowns require unique employee names."
+            )
+        employees_by_name[key] = employee
+    records = []
+    seen = {}
+    for row_number in range(2, sheet.max_row + 1):
+        employee_id = normalize(sheet.cell(row_number, lookup[employee_label.casefold()]).value).upper()
+        pcn = normalize(sheet.cell(row_number, lookup[pcn_label.casefold()]).value)
+        manager_name = normalize(sheet.cell(row_number, lookup[manager_name_label.casefold()]).value)
+        manager_id = normalize(sheet.cell(row_number, lookup[manager_id_label.casefold()]).value).upper()
+        role = normalize(sheet.cell(row_number, lookup[role_label.casefold()]).value)
+        explanation = normalize(sheet.cell(row_number, lookup[explanation_label.casefold()]).value)
+        if not any((manager_name, manager_id, role, explanation)):
+            continue
+        if employee_id:
+            validate_id(employee_id, "employee ID", sheet_name, row_number)
+        elif not pcn:
+            raise ValueError(
+                f"Sheet '{sheet_name}', row {row_number}: enter an employee or a PCN for the vacant position"
+            )
+        if employee_id and employee_id not in employees:
+            raise ValueError(f"Sheet '{sheet_name}', row {row_number}: employee ID '{employee_id}' is not on Employees")
+        if manager_name:
+            selected = employees_by_name.get(manager_name.casefold())
+            if not selected:
+                raise ValueError(f"Sheet '{sheet_name}', row {row_number}: manager '{manager_name}' is not on Employees")
+            if manager_id and manager_id != selected["id"]:
+                raise ValueError(
+                    f"Sheet '{sheet_name}', row {row_number}: manager name '{manager_name}' "
+                    f"does not match manager ID '{manager_id}'"
+                )
+            manager_id = selected["id"]
+        validate_id(manager_id, "manager ID", sheet_name, row_number)
+        if manager_id not in employees:
+            raise ValueError(f"Sheet '{sheet_name}', row {row_number}: manager ID '{manager_id}' is not on Employees")
+        if not employees[manager_id]["isManager"]:
+            raise ValueError(f"Sheet '{sheet_name}', row {row_number}: '{manager_id}' is not marked as a manager")
+        role = role or "Unspecified"
+        if role.casefold() not in role_colors:
+            raise ValueError(f"Sheet '{sheet_name}', row {row_number}: role '{role}' is not on Role Settings")
+        record_key = f"EMP:{employee_id}" if employee_id else f"PCN:{pcn.upper()}"
+        if record_key in seen:
+            raise ValueError(
+                f"Sheet '{sheet_name}' has duplicate '{record_key}' in {state} data "
+                f"on rows {seen[record_key]} and {row_number}"
+            )
+        seen[record_key] = row_number
+        records.append({
+            "employeeId": employee_id,
+            "employeeName": employees[employee_id]["name"] if employee_id else "Vacant",
+            "managerId": manager_id,
+            "managerName": employees[manager_id]["name"],
+            "role": role_colors[role.casefold()]["name"],
+            "pcn": pcn,
+            "explanation": explanation,
+            "isVacant": not bool(employee_id),
+            "sourceRow": row_number,
+        })
+    return records
+
+
 def main():
     parser = argparse.ArgumentParser(description="Extract organization workbook data to JSON")
     parser.add_argument("--settings", required=True)
@@ -212,12 +294,19 @@ def main():
     workbook = load_workbook(workbook_path, read_only=False, data_only=True)
     employees = read_employees(workbook, settings["sheets"].get("employees", "Employees"))
     role_colors = read_role_colors(workbook, settings["sheets"].get("roles", "Role Settings"))
+    org_sheet = settings["sheets"].get("org")
+    if org_sheet:
+        current = read_org_state(workbook, org_sheet, "current", settings["columns"], employees, role_colors)
+        future = read_org_state(workbook, org_sheet, "future", settings["columns"], employees, role_colors)
+    else:
+        current = read_state_sheet(workbook, settings["sheets"]["current"], settings["columns"], employees, role_colors)
+        future = read_state_sheet(workbook, settings["sheets"]["future"], settings["columns"], employees, role_colors)
     payload = {
         "workbookPath": str(workbook_path),
         "roleColors": {item["name"]: item["color"] for item in role_colors.values()},
         "employees": list(employees.values()),
-        "current": read_state_sheet(workbook, settings["sheets"]["current"], settings["columns"], employees, role_colors),
-        "future": read_state_sheet(workbook, settings["sheets"]["future"], settings["columns"], employees, role_colors),
+        "current": current,
+        "future": future,
     }
     Path(args.output).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
